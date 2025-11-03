@@ -25,7 +25,7 @@
 
 1. 克隆仓库
    ```bash
-   git clone https://github.com/yourusername/file-compressor-v2.git
+   git clone https://github.com/gitllk/file-compressor.git
    cd file-compressor-v2
    ```
 
@@ -141,9 +141,7 @@ file-compressor-v2/
 ├── requirements.txt           # 依赖列表
 ├── README.md                  # 项目说明（本文件）
 ├── LICENSE                    # MIT许可证
-├── .gitignore                 # Git忽略文件
-└── history/                   # 历史记录目录
-    └── .gitkeep
+└── .gitignore                 # Git忽略文件
 ```
 
 ## 🔧 依赖项
@@ -228,7 +226,7 @@ python compress_tool.py
 ### 1. 初始化Git仓库
 
 ```bash
-cd file-compressor-v2
+cd file-compressor
 git init
 git add .
 git commit -m "Initial commit: File Compressor v2.0"
@@ -287,3 +285,4 @@ Copyright © 2024-2025 批量文件压缩工具
 ---
 
 如有问题或建议，欢迎在 [Issues](https://github.com/yourusername/file-compressor-v2/issues) 中反馈。
+
