@@ -1,0 +1,13 @@
+# 批量文件压缩工具 v2.0 - 依赖项列表
+
+# 核心依赖
+Pillow>=9.0.0
+
+# 可选依赖（用于视频预览）
+# opencv-python>=4.5.0  # 可选：用于视频预览功能
+
+# 注意：
+# 1. FFmpeg需要单独安装，程序会自动检测并在Windows平台提供自动下载功能
+# 2. tkinter是Python标准库，通常已包含在Python安装中
+# 3. 其他依赖项（os, sys, threading等）均为Python标准库
+
