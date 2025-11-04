@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>批量文件压缩工具 - Web版</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1 class="title">批量文件压缩工具</h1>
+            <p class="subtitle">Web版 - 支持图片和视频压缩</p>
+        </header>
+
+        <!-- 压缩设置面板 -->
+        <div class="settings-panel" id="settings-panel">
+            <div class="settings-header">
+                <h3>压缩设置</h3>
+                <button class="btn btn-secondary" id="toggle-settings">高级设置</button>
+            </div>
+            <div class="settings-content" id="settings-content" style="display: none;">
+                <div class="settings-grid">
+                    <div class="setting-group">
+                        <label>预设配置:</label>
+                        <select id="preset-select" class="setting-input">
+                            <option value="high_quality">高质量</option>
+                            <option value="balanced" selected>平衡</option>
+                            <option value="small_size">小体积</option>
+                            <option value="fast">快速</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>照片质量 (0-100):</label>
+                        <input type="number" id="photo-quality" class="setting-input" min="0" max="100" value="85">
+                    </div>
+                    <div class="setting-group">
+                        <label>视频 CRF (0-51):</label>
+                        <input type="number" id="video-crf" class="setting-input" min="0" max="51" value="23">
+                    </div>
+                    <div class="setting-group">
+                        <label>视频预设:</label>
+                        <select id="video-preset" class="setting-input">
+                            <option value="veryfast">非常快</option>
+                            <option value="fast">快</option>
+                            <option value="medium" selected>中等</option>
+                            <option value="slow">慢</option>
+                        </select>
+                    </div>
+                    <div class="setting-group">
+                        <label>最大宽度:</label>
+                        <input type="number" id="max-width" class="setting-input" min="0" value="2000">
+                    </div>
+                    <div class="setting-group">
+                        <label>最大高度:</label>
+                        <input type="number" id="max-height" class="setting-input" min="0" value="2000">
+                    </div>
+                    <div class="setting-group">
+                        <label>分辨率预设:</label>
+                        <select id="resolution-preset" class="setting-input">
+                            <option value="原始大小">原始大小</option>
+                            <option value="1920x1080 (Full HD)">1920x1080 (Full HD)</option>
+                            <option value="1280x720 (HD)" selected>1280x720 (HD)</option>
+                            <option value="3840x2160 (4K UHD)">3840x2160 (4K UHD)</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="settings-footer">
+                    <button class="btn btn-primary" id="save-settings">保存设置</button>
+                    <button class="btn btn-secondary" id="reset-settings">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="single">单文件压缩</button>
+            <button class="tab-btn" data-tab="batch">批量压缩</button>
+        </div>
+
+        <!-- 单文件压缩 -->
+        <div class="tab-content active" id="single-tab">
+            <!-- 上传前预览 -->
+            <div class="preview-container" id="preview-before" style="display: none;">
+                <h4>原始文件预览</h4>
+                <div class="preview-image-wrapper">
+                    <img id="preview-original-img" class="preview-image" alt="原始文件预览">
+                </div>
+            </div>
+
+            <div class="upload-area" id="single-upload-area">
+                <div class="upload-icon">📁</div>
+                <p class="upload-text">点击或拖拽文件到此处上传</p>
+                <p class="upload-hint">支持 JPG, PNG, GIF, BMP, TIFF, WEBP, MP4, AVI, MOV, MKV 等格式</p>
+                <input type="file" id="single-file-input" accept=".jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp,.mp4,.avi,.mov,.mkv,.wmv,.flv,.m4v,.webm,.3gp" style="display: none;">
+            </div>
+            <div class="file-info" id="single-file-info" style="display: none;">
+                <div class="file-name"></div>
+                <div class="file-size"></div>
+                <div class="progress-bar">
+                    <div class="progress-fill"></div>
+                </div>
+                <div class="progress-text">0%</div>
+            </div>
+            <div class="result" id="single-result" style="display: none;">
+                <!-- 压缩后对比预览 -->
+                <div class="preview-comparison" id="preview-comparison" style="display: none;">
+                    <h4>压缩前后对比</h4>
+                    <div class="comparison-container">
+                        <div class="comparison-item">
+                            <div class="comparison-label">原始</div>
+                            <div class="preview-image-wrapper">
+                                <img id="preview-original-compressed" class="preview-image" alt="原始文件">
+                            </div>
+                        </div>
+                        <div class="comparison-item">
+                            <div class="comparison-label">压缩后</div>
+                            <div class="preview-image-wrapper">
+                                <img id="preview-compressed-img" class="preview-image" alt="压缩后文件">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="result-info">
+                    <div class="result-item">
+                        <span class="result-label">原始大小:</span>
+                        <span class="result-value" id="original-size"></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">压缩后大小:</span>
+                        <span class="result-value" id="compressed-size"></span>
+                    </div>
+                    <div class="result-item">
+                        <span class="result-label">压缩率:</span>
+                        <span class="result-value" id="compression-ratio"></span>
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="download-btn">下载压缩文件</button>
+            </div>
+        </div>
+
+        <!-- 批量压缩 -->
+        <div class="tab-content" id="batch-tab">
+            <div class="upload-area" id="batch-upload-area">
+                <div class="upload-icon">📁</div>
+                <p class="upload-text">点击或拖拽多个文件到此处上传</p>
+                <p class="upload-hint">支持同时选择多个文件进行批量压缩</p>
+                <input type="file" id="batch-file-input" multiple accept=".jpg,.jpeg,.png,.gif,.bmp,.tiff,.tif,.webp,.mp4,.avi,.mov,.mkv,.wmv,.flv,.m4v,.webm,.3gp" style="display: none;">
+            </div>
+            <div class="file-list" id="batch-file-list" style="display: none;">
+                <div class="file-list-header">
+                    <span>文件名</span>
+                    <span>大小</span>
+                    <span>状态</span>
+                    <span>操作</span>
+                </div>
+                <div class="file-list-items" id="batch-file-items"></div>
+                <div class="batch-progress">
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="batch-progress-fill"></div>
+                    </div>
+                    <div class="progress-text" id="batch-progress-text">0 / 0</div>
+                </div>
+            </div>
+            <div class="result" id="batch-result" style="display: none;">
+                <div class="result-summary">
+                    <div class="summary-item">
+                        <span class="summary-label">总文件数:</span>
+                        <span class="summary-value" id="total-files">0</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">成功:</span>
+                        <span class="summary-value success" id="success-count">0</span>
+                    </div>
+                    <div class="summary-item">
+                        <span class="summary-label">失败:</span>
+                        <span class="summary-value error" id="failed-count">0</span>
+                    </div>
+                </div>
+                <button class="btn btn-primary" id="download-all-btn">下载所有文件 (ZIP)</button>
+            </div>
+        </div>
+
+        <div class="status-bar">
+            <span id="status-text">就绪</span>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

@@ -12,11 +12,12 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-# 处理PyInstaller打包后的路径
-if getattr(sys, 'frozen', False):
-    app_path = sys._MEIPASS
-else:
-    app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 导入统一路径工具
+from path_utils import get_v2_dir, get_app_path, get_bin_dir
+
+# 获取路径（使用统一路径工具）
+app_path = get_app_path()
+v2_dir = get_v2_dir()
 
 
 class FFmpegManager:
@@ -37,7 +38,8 @@ class FFmpegManager:
             logger: 日志记录器
         """
         self.logger = logger or logging.getLogger('FileCompressor.FFmpegManager')
-        self.bin_dir = os.path.join(app_path, 'bin')
+        # 使用当前文件所在目录（v2目录）下的bin文件夹
+        self.bin_dir = get_bin_dir()
         self.default_ffmpeg_path = os.path.join(self.bin_dir, 'ffmpeg.exe')
         self.default_ffprobe_path = os.path.join(self.bin_dir, 'ffprobe.exe')
     

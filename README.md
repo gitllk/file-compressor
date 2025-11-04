@@ -1,288 +1,249 @@
 # 批量文件压缩工具 v2.0
 
-[![Python](https://img.shields.io/badge/Python-3.7+-blue.svg)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/Platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg)]()
+## 版本概述
 
-批量文件压缩工具是一个功能强大的图片和视频批量压缩工具，支持GPU硬件加速，提供现代化的GUI界面。
+v2.0是模块化重构版本，采用了更清晰的代码架构，并添加了暂停/恢复、断点续传、压缩预览和历史记录等新功能。
 
-## ✨ 主要特性
+## 新功能特性
 
-- 📷 **图片压缩**: 支持JPG, PNG, GIF, BMP, TIFF, WEBP等格式
-- 🎬 **视频压缩**: 支持MP4, AVI, MOV, MKV等格式
-- ⚡ **GPU加速**: 支持AMD和Nvidia GPU硬件加速
-- 📐 **分辨率预设**: 多种常见分辨率预设，支持自定义分辨率
-- 🔄 **暂停/恢复**: 压缩过程中可随时暂停和恢复
-- 💾 **断点续传**: 程序中断后可从断点继续
-- 👁️ **压缩预览**: 图片左右对比预览，视频信息展示
-- 📋 **历史记录**: 自动保存压缩历史
-- 🚀 **FFmpeg自动下载**: Windows平台自动检测和下载FFmpeg
-- 💡 **内存优化**: 优化大文件列表的内存占用
-
-## 📦 安装
-
-### 方式一：从源码运行
-
-1. 克隆仓库
-   ```bash
-   git clone https://github.com/gitllk/file-compressor.git
-   cd file-compressor-v2
-   ```
-
-2. 安装依赖
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. 运行程序
-   ```bash
-   python compress_tool.py
-   ```
-
-## 🚀 快速开始
-
-1. **选择文件夹**
-   - 点击"源文件夹"的"浏览"按钮选择源文件夹
-   - 点击"目标文件夹"的"浏览"按钮选择输出位置
-
-2. **设置参数**
-   - **照片质量**: 0-100（推荐85）
-   - **分辨率**: 选择预设或自定义宽x高
-   - **视频CRF**: 18-28（18质量最好，28压缩率最高）
-   - **编码模式**: CPU / AMD GPU / Nvidia GPU
-
-3. **开始压缩**
-   - 点击"刷新"按钮扫描文件
-   - 选择要压缩的文件（可选）
-   - 点击"开始压缩"按钮
-
-## 📋 支持的文件格式
-
-### 图片格式
-- JPG, JPEG, PNG, GIF, BMP, TIFF, TIF, WEBP
-
-### 视频格式
-- MP4, AVI, MOV, MKV, WMV, FLV, M4V, WEBM, 3GP
-
-## ⚡ GPU硬件加速
-
-### AMD GPU
-- 支持H.264和HEVC编码（AMF编码器）
-- 需要AMD Radeon系列显卡
-- 可设置编码器和比特率
-
-### Nvidia GPU
-- 支持H.264和HEVC编码（NVENC编码器）
-- 需要Nvidia GeForce/Quadro系列显卡
-- 可设置编码器、预设和比特率
-
-**注意**: GPU加速失败时会自动回退到CPU编码。
-
-## 🎯 主要功能
-
-### 分辨率设置
-- **预设分辨率**: 原始大小、1920x1080、1280x720、4K、2K等多种预设
-- **自定义分辨率**: 手动输入最宽/最高分辨率
-- **自动调整**: 保持原始比例自动调整尺寸
-
-### 暂停/恢复
+### 1. **暂停/恢复功能**
 - 压缩过程中可随时暂停
-- 暂停后可恢复继续
+- 暂停后可以恢复继续压缩
 - 暂停时间不计入总压缩时间
 
-### 断点续传
-- 程序意外关闭后自动保存进度
-- 重新启动时可选择继续未完成的压缩
+### 2. **断点续传**
+- 压缩中断后自动保存断点数据
+- 重新启动程序时可选择继续未完成的压缩
 - 自动跳过已完成的文件
 
-### 压缩预览
-- 选择单个文件测试压缩效果
-- 图片：左右对比显示原图和压缩图
-- 视频：显示压缩信息和文件大小对比
-- 临时文件自动清理
+### 3. **压缩预览**
+- 可选择单个文件进行测试压缩
+- 预览压缩效果和压缩率
+- 输出文件保存到临时目录
 
-### 历史记录
+### 4. **历史记录**
 - 自动保存每次压缩的统计信息
-- 查看详细压缩参数和结果
+- 查看历史压缩记录
+- 查看详细压缩统计和配置信息
 - 支持清空历史记录
 
-### 批量操作
-- 全选、全不选、反选
-- 排除选中的文件或文件夹
-- 按类型过滤文件（全部、图片、视频、其他）
+## 模块化架构
 
-## ⌨️ 快捷键
+### 核心模块
+
+1. **`config_manager.py`** - 配置管理模块
+   - 统一管理所有配置项
+   - 配置验证和默认值处理
+   - 配置文件读写
+
+2. **`file_processor.py`** - 文件处理模块
+   - 路径规范化和验证
+   - 权限检查
+   - 磁盘空间检查
+   - 文件大小估算
+
+3. **`image_compressor.py`** - 图片压缩模块
+   - 图片压缩处理
+   - 支持JPG, PNG, BMP等格式
+   - 自动调整尺寸
+
+4. **`video_compressor.py`** - 视频压缩模块
+   - CPU编码支持
+   - AMD GPU加速（AMF编码器）
+   - Nvidia GPU加速（NVENC编码器）
+   - 自动回退机制
+
+5. **`compression_history.py`** - 历史记录模块
+   - 压缩记录保存
+   - 历史记录查询
+   - 历史记录管理
+
+6. **`compress_tool.py`** - 主程序
+   - UI界面
+   - 业务流程控制
+   - 事件处理
+
+## 功能对比
+
+| 功能 | v1.0 | v2.0 |
+|------|------|------|
+| 模块化架构 | ❌ | ✅ |
+| 暂停/恢复 | ❌ | ✅ |
+| 断点续传 | ❌ | ✅ |
+| 压缩预览 | ❌ | ✅ |
+| 历史记录 | ❌ | ✅ |
+| GPU加速 | AMD + Nvidia | AMD + Nvidia |
+| 批量操作 | ✅ | ✅ |
+| 文件过滤 | ✅ | ✅ |
+
+## 使用说明
+
+### 基本操作
+
+1. **选择源文件夹和目标文件夹**
+   - 点击"浏览"按钮选择文件夹
+   - 支持Ctrl+O（源文件夹）、Ctrl+D（目标文件夹）
+
+2. **设置压缩参数**
+   - 照片质量：0-100
+   - 视频CRF：18-28
+   - 视频预设：ultrafast 到 veryslow
+   - 编码模式：CPU / AMD GPU / Nvidia GPU
+
+3. **开始压缩**
+   - 点击"开始压缩"按钮或按Ctrl+R
+   - 可随时暂停（Ctrl+P）或停止（Ctrl+T）
+   - 暂停后可恢复（Ctrl+U）
+
+### 高级功能
+
+#### 暂停/恢复
+- 压缩过程中点击"暂停"按钮
+- 暂停后点击"恢复"继续压缩
+- 暂停时间不计入总压缩时间
+
+#### 断点续传
+- 压缩中断后会自动保存断点数据
+- 重新启动程序时会提示是否继续
+- 选择"是"可继续未完成的压缩
+
+#### 压缩预览
+- 点击"压缩预览"按钮
+- 选择一个文件进行测试压缩
+- 查看压缩效果和压缩率
+
+#### 历史记录
+- 点击"历史记录"按钮查看
+- 查看每次压缩的详细统计
+- 支持查看详情和清空历史
+
+## 快捷键
 
 - `Ctrl+O` - 选择源文件夹
 - `Ctrl+D` - 选择目标文件夹
+- `Ctrl+E` - 打开输出文件夹
 - `Ctrl+S` - 保存设置
 - `F5` - 刷新文件列表
 - `Ctrl+R` - 开始压缩
 - `Ctrl+P` - 暂停压缩
 - `Ctrl+U` - 恢复压缩
 - `Ctrl+T` - 停止压缩
-- `Ctrl+E` - 打开输出文件夹
 - `Ctrl+Q` - 退出程序
 
-## 📁 项目结构
+## 技术改进
+
+### 代码架构
+- 单一职责原则：每个模块只负责一个功能
+- 依赖注入：模块间通过接口交互
+- 易于测试：模块可独立测试
+
+### 性能优化
+- 后台线程扫描文件，避免UI阻塞
+- 批量更新UI，提升响应速度
+- 索引映射优化文件查找
+
+### 用户体验
+- 非阻塞进度显示，集成在主界面
+- 实时统计信息更新
+- 详细的操作提示和错误信息
+
+## 文件结构
 
 ```
-file-compressor-v2/
-├── compress_tool.py          # 主程序（GUI界面）
-├── config_manager.py          # 配置管理模块
-├── file_processor.py          # 文件处理模块
-├── image_compressor.py        # 图片压缩模块
-├── video_compressor.py        # 视频压缩模块
-├── compression_history.py     # 历史记录模块
-├── ffmpeg_manager.py          # FFmpeg管理模块
-├── file_info.py               # 文件信息数据结构
-├── ui_components.py           # UI组件（可选）
-├── __init__.py                # 包初始化
-├── requirements.txt           # 依赖列表
-├── README.md                  # 项目说明（本文件）
-├── LICENSE                    # MIT许可证
-└── .gitignore                 # Git忽略文件
+v2/
+├── __init__.py              # 包初始化
+├── compress_tool.py         # 主程序
+├── config_manager.py        # 配置管理
+├── file_processor.py        # 文件处理
+├── image_compressor.py      # 图片压缩
+├── video_compressor.py      # 视频压缩
+├── compression_history.py   # 历史记录
+├── ui_components.py         # UI组件（可选）
+├── README.md                # 说明文档
+├── config.ini               # 配置文件（自动生成）
+├── checkpoint.json          # 断点数据（自动生成）
+└── history/                 # 历史记录目录（自动创建）
+    └── compression_history.json
 ```
 
-## 🔧 依赖项
+## 依赖项
 
 ### 必需依赖
 - Python 3.7+
 - tkinter（Python标准库）
 - Pillow (PIL) >= 9.0.0
 - FFmpeg（用于视频压缩，程序支持自动检测和下载）
+- configparser（Python标准库）
 
 ### 可选依赖
 - opencv-python >= 4.5.0（用于视频预览功能，可选）
 
-## 📝 更新日志
+### FFmpeg安装说明
 
-### v2.0.0 (2024-11)
+**Windows平台**：
+- 程序启动时会自动检测FFmpeg
+- 如果未找到，会提示并支持从官网自动下载
+- 下载的文件会自动解压到`bin`目录
+
+**其他平台**：
+- 请手动安装FFmpeg
+- 添加到系统PATH环境变量中
+- 或配置FFmpeg路径到程序中
+
+## 安装说明
+
+### 快速开始
+
+1. **克隆仓库**（或下载代码）
+   ```bash
+   git clone <repository-url>
+   cd <repository-name>/v2
+   ```
+
+2. **安装Python依赖**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+3. **运行程序**
+   ```bash
+   python compress_tool.py
+   ```
+
+4. **FFmpeg安装**
+   - Windows：程序会自动检测并提供下载选项
+   - 其他平台：请手动安装FFmpeg并添加到PATH
+
+## 注意事项
+
+1. **FFmpeg路径**：
+   - Windows：程序支持自动下载到`bin`目录
+   - 其他平台：确保FFmpeg可执行文件在系统PATH中或正确配置路径
+2. **GPU驱动**：使用GPU加速需要安装对应的显卡驱动
+3. **磁盘空间**：压缩前会自动检查磁盘空间，确保有足够空间
+4. **断点数据**：断点数据保存在`checkpoint.json`，不要手动删除正在使用的断点文件
+5. **临时文件**：预览功能会创建临时文件，关闭预览窗口后会自动清理
+
+## 更新日志
+
+### v2.0 (2024-11)
 - ✨ 模块化重构，代码更清晰
-- ✨ 添加分辨率预设和自定义功能
-- ✨ FFmpeg自动检测和下载功能（Windows）
-- ✨ 压缩预览功能（图片左右对比，视频信息显示）
+- ✨ 添加暂停/恢复功能
+- ✨ 添加断点续传支持
+- ✨ 添加压缩预览功能（图片左右对比，视频信息显示）
+- ✨ 添加历史记录功能
+- ✨ 改进UI，进度显示集成在主界面，现代化配色
+- ✨ FFmpeg自动检测和下载功能（Windows平台）
 - ✨ 内存优化，使用__slots__减少内存占用
-- ✨ 支持排除文件夹
+- ✨ 优化文件列表显示，支持排除文件夹
 - ✨ 自动排除非媒体文件选项
-- ✨ 现代化UI设计，去除emoji，窗口居中显示
-- 🔧 改进文件列表显示性能
 - 🐛 修复已知问题
 - 📝 完善文档
 
-## 🔧 开发说明
-
-### 依赖安装
-
-```bash
-# 安装必需依赖
-pip install -r requirements.txt
-
-# 可选：安装视频预览支持
-pip install opencv-python
-```
-
-### 运行源码
-
-```bash
-python compress_tool.py
-```
-
-### 代码结构
-
-- **压缩逻辑**: `image_compressor.py`, `video_compressor.py`
-- **配置管理**: `config_manager.py`
-- **文件处理**: `file_processor.py`
-- **历史记录**: `compression_history.py`
-- **FFmpeg管理**: `ffmpeg_manager.py`
-- **主界面**: `compress_tool.py`
-
-## ⚠️ 注意事项
-
-1. **FFmpeg路径**:
-   - Windows: 程序支持自动下载到bin目录
-   - 其他平台: 确保FFmpeg可执行文件在系统PATH中或正确配置路径
-
-2. **GPU驱动**: 使用GPU加速需要安装对应的显卡驱动
-
-3. **磁盘空间**: 压缩前会自动检查磁盘空间，确保有足够空间
-
-4. **断点数据**: 断点数据保存在`checkpoint.json`，不要手动删除正在使用的断点文件
-
-5. **临时文件**: 预览功能会创建临时文件，关闭预览窗口后会自动清理
-
-6. **Git忽略**: 以下文件会被Git忽略：
-   - `__pycache__/` - Python缓存
-   - `config.ini` - 用户配置文件
-   - `checkpoint.json` - 断点数据
-   - `history/` - 历史记录文件
-   - `logs/` - 日志文件
-   - `bin/` - FFmpeg目录
-
-## 📤 发布到GitHub
-
-如果您想将此项目发布到GitHub：
-
-### 1. 初始化Git仓库
-
-```bash
-cd file-compressor
-git init
-git add .
-git commit -m "Initial commit: File Compressor v2.0"
-```
-
-### 2. 创建GitHub仓库
-
-1. 登录GitHub
-2. 点击右上角 "+" → "New repository"
-3. 填写仓库信息：
-   - Repository name: `file-compressor-v2`（或您喜欢的名称）
-   - Description: "批量文件压缩工具 v2.0 - 支持图片和视频压缩，GPU加速"
-   - Visibility: Public（或Private）
-   - 不要勾选 "Initialize with README"（已存在）
-
-### 3. 连接并推送
-
-```bash
-git remote add origin https://github.com/您的用户名/file-compressor-v2.git
-git branch -M main
-git push -u origin main
-```
-
-### 4. 创建Release（可选）
-
-```bash
-git tag -a v2.0.0 -m "Release v2.0.0"
-git push origin v2.0.0
-```
-
-然后在GitHub仓库页面创建Release。
-
-## 🤝 贡献
-
-欢迎提交Issue和Pull Request！
-
-### 贡献指南
-
-1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
-
-## 📄 许可证
-
-本项目采用 [MIT License](LICENSE) 许可证。
+## 许可证
 
 Copyright © 2024-2025 批量文件压缩工具
+保留所有权利
 
-## 🙏 致谢
-
-- FFmpeg: https://ffmpeg.org/
-- Pillow (PIL): https://python-pillow.org/
-
----
-
-如有问题或建议，欢迎在 [Issues](https://github.com/yourusername/file-compressor-v2/issues) 中反馈。
+本软件仅供个人学习和非商业用途使用。
 

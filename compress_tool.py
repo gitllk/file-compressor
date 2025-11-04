@@ -32,6 +32,11 @@ from image_compressor import ImageCompressor
 from video_compressor import VideoCompressor
 from compression_history import CompressionHistory
 from ffmpeg_manager import FFmpegManager
+try:
+    from web_server import WebServer
+    HAS_WEB_SERVER = True
+except ImportError:
+    HAS_WEB_SERVER = False
 
 # 延迟导入，避免循环依赖
 try:
@@ -46,18 +51,55 @@ except ImportError:
         def to_dict(f):
             return f if isinstance(f, dict) else f.to_dict() if hasattr(f, 'to_dict') else {}
 
-# 处理PyInstaller打包后的路径
-if getattr(sys, 'frozen', False):
-    app_path = sys._MEIPASS
-else:
-    app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 导入统一路径工具
+from path_utils import get_v2_dir, get_app_path, get_log_dir
+
+# 获取路径（使用统一路径工具）
+app_path = get_app_path()
+v2_dir = get_v2_dir()
 
 
-def setup_logging():
-    """设置日志系统"""
-    log_dir = os.path.join(os.path.dirname(app_path), "v2", "logs")
+class TextHandler(logging.Handler):
+    """自定义日志处理器，将日志输出到Text组件"""
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+        self.max_lines = 1000  # 最大行数，防止日志过多导致界面卡顿
+    
+    def emit(self, record):
+        """发送日志记录到Text组件"""
+        try:
+            msg = self.format(record)
+            # 在GUI线程中更新文本组件
+            self.text_widget.after(0, self._append_text, msg)
+        except Exception:
+            pass
+    
+    def _append_text(self, msg):
+        """在GUI线程中追加文本"""
+        try:
+            self.text_widget.insert(tk.END, msg + '\n')
+            # 限制最大行数
+            lines = int(self.text_widget.index('end-1c').split('.')[0])
+            if lines > self.max_lines:
+                self.text_widget.delete('1.0', f'{lines - self.max_lines}.0')
+            # 自动滚动到底部
+            self.text_widget.see(tk.END)
+        except Exception:
+            pass
+
+
+def setup_logging(gui_text_widget=None):
+    """
+    设置日志系统
+    
+    Args:
+        gui_text_widget: 可选的GUI文本组件，用于显示实时日志
+    """
+    # 使用统一路径工具获取日志目录
+    log_dir = get_log_dir()
     if not os.path.exists(log_dir):
-        os.makedirs(log_dir)
+        os.makedirs(log_dir, exist_ok=True)
     
     log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     date_format = '%Y-%m-%d %H:%M:%S'
@@ -83,6 +125,15 @@ def setup_logging():
     
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+    
+    # GUI日志处理器（如果提供了文本组件）
+    if gui_text_widget:
+        gui_handler = TextHandler(gui_text_widget)
+        gui_handler.setLevel(logging.INFO)
+        gui_formatter = logging.Formatter(log_format, datefmt=date_format)
+        gui_handler.setFormatter(gui_formatter)
+        logger.addHandler(gui_handler)
+    
     logging.getLogger('PIL').setLevel(logging.WARNING)
     
     return logger
@@ -105,7 +156,7 @@ class FileCompressorApp:
     def __init__(self, root):
         self.root = root
         
-        # 初始化日志
+        # 初始化日志（先不添加GUI处理器，稍后在日志窗口创建后添加）
         self.logger = setup_logging()
         
         # 初始化管理器
@@ -116,6 +167,20 @@ class FileCompressorApp:
         self.video_compressor = VideoCompressor(self.config_manager, self.logger)
         self.history_manager = CompressionHistory(logger=self.logger)
         self.ffmpeg_manager = FFmpegManager(self.logger)
+        
+        # Web服务器（如果可用）
+        self.web_server = None
+        self.web_server_running = False
+        if HAS_WEB_SERVER:
+            try:
+                self.web_server = WebServer(logger=self.logger, host='0.0.0.0', port=5000)
+            except Exception as e:
+                self.logger.warning(f"初始化Web服务器失败: {e}")
+                self.web_server = None
+        
+        # 日志窗口相关
+        self.log_window = None
+        self.log_text = None
         
         # 创建主窗口
         self._create_main_window()
@@ -163,7 +228,8 @@ class FileCompressorApp:
         self.total_paused_duration = 0
         
         # 断点续传数据
-        self.checkpoint_file = os.path.join(os.path.dirname(app_path), 'v2', 'checkpoint.json')
+        # 使用当前文件所在目录（v2目录）下的checkpoint.json
+        self.checkpoint_file = os.path.join(v2_dir, 'checkpoint.json')
         
         # 创建界面
         self._create_widgets()
@@ -467,6 +533,12 @@ class FileCompressorApp:
         tools_menu.add_command(label="停止压缩", command=self.stop_compression, accelerator="Ctrl+T")
         tools_menu.add_separator()
         tools_menu.add_command(label="压缩预览", command=self.preview_compression)
+        tools_menu.add_separator()
+        if HAS_WEB_SERVER and self.web_server:
+            tools_menu.add_command(label="启动Web服务", command=self.start_web_server)
+            tools_menu.add_command(label="停止Web服务", command=self.stop_web_server)
+            tools_menu.add_separator()
+        tools_menu.add_command(label="实时日志", command=self.show_log_window)
         
         # 帮助菜单
         help_menu = tk.Menu(menubar, tearoff=0)
@@ -792,6 +864,21 @@ class FileCompressorApp:
         ttk.Button(right_buttons, text="预览", command=self.preview_compression, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
         ttk.Button(right_buttons, text="历史", command=self.show_history, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
         ttk.Button(right_buttons, text="打开输出", command=self.open_output_folder, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
+        
+        # Web服务器按钮（如果可用）
+        if HAS_WEB_SERVER and self.web_server:
+            ttk.Separator(right_buttons, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=4)
+            self.web_server_button = ttk.Button(
+                right_buttons, 
+                text="启动Web服务", 
+                command=self.toggle_web_server,
+                style='Primary.TButton'
+            )
+            self.web_server_button.pack(side=tk.LEFT, padx=4)
+        
+        # 日志按钮
+        ttk.Separator(right_buttons, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=4)
+        ttk.Button(right_buttons, text="实时日志", command=self.show_log_window, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
     
     def _create_file_list_frame(self, parent):
         """创建文件列表区域（现代化设计）"""
@@ -1728,20 +1815,77 @@ class FileCompressorApp:
                 self.logger.error(f"清除断点数据失败: {e}")
     
     def preview_compression(self):
-        """压缩预览（单文件测试） - 直接在界面中显示对比"""
-        source = self.source_dir.get()
-        if not source or not os.path.isdir(source):
-            messagebox.showinfo("提示", "请先选择源文件夹")
+        """压缩预览（单文件测试） - 预览文件列表中选中的文件"""
+        # 检查是否有文件列表
+        if not self.file_list:
+            messagebox.showinfo("提示", "请先刷新文件列表")
             return
         
-        # 让用户选择一个文件进行预览
-        from tkinter import filedialog as fd
-        preview_file = fd.askopenfilename(
-            title="选择要预览压缩的文件",
-            initialdir=source
-        )
+        # 从Treeview获取选中的文件
+        if not self.file_listbox:
+            messagebox.showinfo("提示", "文件列表未初始化")
+            return
+        
+        selected_items = self.file_listbox.selection()
+        if not selected_items:
+            messagebox.showinfo("提示", "请先在文件列表中选择要预览的文件")
+            return
+        
+        # 获取第一个选中的文件（如果有多个，只预览第一个）
+        selected_item_id = selected_items[0]
+        
+        # 检查选中的是文件还是文件夹节点
+        item_values = self.file_listbox.item(selected_item_id, 'values')
+        item_text = self.file_listbox.item(selected_item_id, 'text')
+        
+        # 如果是文件夹节点（有text但values为空或第一个值为空），提示用户选择文件
+        if item_text and (not item_values or not item_values[0]):
+            messagebox.showinfo("提示", "请选择文件而不是文件夹")
+            return
+        
+        # 通过item_id找到对应的文件索引
+        preview_file = None
+        for i, file_info in enumerate(self.file_list):
+            # 兼容两种格式获取source_path
+            if hasattr(file_info, 'source_path'):
+                source_path = file_info.source_path
+            else:
+                source_path = file_info.get('source_path') or \
+                             os.path.join(file_info.get('source_dir', ''), 
+                                         file_info.get('rel_path', ''),
+                                         file_info.get('file_name', '')) if file_info.get('rel_path', '') != '.' else \
+                             os.path.join(file_info.get('source_dir', ''), file_info.get('file_name', ''))
+            
+            if self.file_index_map.get(source_path) == selected_item_id:
+                preview_file = source_path
+                break
         
         if not preview_file:
+            messagebox.showinfo("提示", "无法找到选中的文件")
+            return
+        
+        # 检查文件是否存在
+        if not os.path.exists(preview_file):
+            messagebox.showerror("错误", f"文件不存在: {preview_file}")
+            return
+        
+        # 检查文件是否被排除
+        file_index = None
+        for i, file_info in enumerate(self.file_list):
+            if hasattr(file_info, 'source_path'):
+                sp = file_info.source_path
+            else:
+                sp = file_info.get('source_path') or \
+                    os.path.join(file_info.get('source_dir', ''), 
+                                file_info.get('rel_path', ''),
+                                file_info.get('file_name', '')) if file_info.get('rel_path', '') != '.' else \
+                    os.path.join(file_info.get('source_dir', ''), file_info.get('file_name', ''))
+            if sp == preview_file:
+                file_index = i
+                break
+        
+        if file_index is not None and file_index in self.excluded_files:
+            messagebox.showinfo("提示", "选中的文件已被排除，无法预览")
             return
         
         file_ext = os.path.splitext(preview_file)[1].lower()
@@ -1755,9 +1899,11 @@ class FileCompressorApp:
         is_video = file_ext in ['.mp4', '.avi', '.mov', '.mkv', '.wmv', '.flv', '.m4v', '.webm', '.3gp']
         
         if is_image:
-            self._preview_image(preview_file, temp_output, temp_dir)
+            # 使用滑动对比预览
+            self._preview_slide_compare(preview_file, temp_output, temp_dir, is_image=True)
         elif is_video:
-            self._preview_video(preview_file, temp_output, temp_dir)
+            # 使用滑动对比预览
+            self._preview_slide_compare(preview_file, temp_output, temp_dir, is_image=False)
         else:
             messagebox.showinfo("提示", "当前文件类型不支持预览，请选择图片或视频文件")
             # 清理临时目录
@@ -2236,6 +2382,721 @@ class FileCompressorApp:
         ttk.Button(button_frame, text="开始压缩预览", command=compress_video).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="关闭", command=on_closing).pack(side=tk.RIGHT, padx=5)
     
+    def _preview_slide_compare(self, source_file, temp_output, temp_dir, is_image=True):
+        """滑动对比预览界面 - 两个媒体重叠放置，滑块控制分割线"""
+        # 创建预览窗口
+        preview_window = tk.Toplevel(self.root)
+        preview_window.title("滑动对比预览 - " + ("图片" if is_image else "视频"))
+        preview_window.transient(self.root)
+        self._center_window(preview_window, 1400, 900)
+        
+        # 窗口关闭处理（在定义on_closing_with_cleanup之前先设置基础处理）
+        def on_closing_base():
+            """基础关闭处理"""
+            try:
+                if hasattr(preview_window, '_video_cap_original') and preview_window._video_cap_original:
+                    preview_window._video_cap_original.release()
+                if hasattr(preview_window, '_video_cap_compressed') and preview_window._video_cap_compressed:
+                    preview_window._video_cap_compressed.release()
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+            except Exception as e:
+                self.logger.warning(f"清理临时文件失败: {e}")
+            preview_window.destroy()
+        
+        # on_closing函数引用
+        on_closing = on_closing_base
+        
+        # 主框架
+        main_frame = ttk.Frame(preview_window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 文件信息
+        try:
+            original_size = os.path.getsize(source_file)
+        except:
+            original_size = 0
+        
+        info_frame = ttk.Frame(main_frame)
+        info_frame.pack(fill=tk.X, pady=(0, 10))
+        
+        ttk.Label(info_frame, text=f"文件: {os.path.basename(source_file)}", 
+                  font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT, padx=10)
+        ttk.Label(info_frame, text=f"原始大小: {FileProcessor.format_size(original_size)}", 
+                  font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=10)
+        
+        # 进度提示
+        progress_label = ttk.Label(main_frame, text="准备压缩...", font=('Segoe UI', 9))
+        progress_label.pack(pady=5)
+        
+        # 媒体对比区域（重叠显示）
+        media_frame = ttk.Frame(main_frame)
+        media_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+        
+        # 创建Canvas用于显示重叠的媒体
+        canvas_frame = ttk.Frame(media_frame)
+        canvas_frame.pack(fill=tk.BOTH, expand=True)
+        
+        preview_canvas = tk.Canvas(canvas_frame, bg='#2c2c2c', highlightthickness=0)
+        preview_canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # 滑块控制区域
+        control_frame = ttk.Frame(main_frame)
+        control_frame.pack(fill=tk.X, pady=10)
+        
+        ttk.Label(control_frame, text="左侧: 原始", font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=10)
+        
+        # 滑块
+        slider_var = tk.DoubleVar(value=50.0)  # 默认50%位置
+        slider = ttk.Scale(control_frame, from_=0.0, to=100.0, 
+                          orient=tk.HORIZONTAL, variable=slider_var, length=600)
+        slider.pack(side=tk.LEFT, padx=10, fill=tk.X, expand=True)
+        
+        ttk.Label(control_frame, text="右侧: 压缩后", font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=10)
+        
+        # 详细信息显示区域
+        details_frame = ttk.LabelFrame(main_frame, text="详细信息", padding="10")
+        details_frame.pack(fill=tk.X, pady=10)
+        
+        details_text = tk.Text(details_frame, wrap=tk.WORD, font=('Courier New', 9), height=6)
+        details_scrollbar = ttk.Scrollbar(details_frame, orient=tk.VERTICAL, command=details_text.yview)
+        details_text.config(yscrollcommand=details_scrollbar.set)
+        details_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        details_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        details_text.config(state=tk.DISABLED)
+        
+        # 统计信息
+        stats_frame = ttk.Frame(main_frame)
+        stats_frame.pack(fill=tk.X, pady=5)
+        
+        stats_label = ttk.Label(stats_frame, text="", font=('Segoe UI', 9))
+        stats_label.pack()
+        
+        # 按钮
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=5)
+        
+        # 存储媒体数据
+        original_photo = None
+        compressed_photo = None
+        original_img = None
+        compressed_img = None
+        display_width = 0
+        display_height = 0
+        display_x = 0
+        display_y = 0
+        video_playing = False
+        video_frame_interval = None
+        
+        # 视频相关
+        if not is_image:
+            preview_window._video_cap_original = None
+            preview_window._video_cap_compressed = None
+            preview_window._video_fps_original = 30
+            preview_window._video_fps_compressed = 30
+        
+        def update_display():
+            """更新显示 - 根据滑块位置绘制分割线"""
+            nonlocal original_photo, compressed_photo, original_img, compressed_img
+            nonlocal display_width, display_height
+            
+            if not original_img or not compressed_img:
+                return
+            
+            preview_canvas.delete("all")
+            
+            # 获取画布尺寸
+            canvas_width = preview_canvas.winfo_width()
+            canvas_height = preview_canvas.winfo_height()
+            
+            if canvas_width <= 1 or canvas_height <= 1:
+                preview_window.after(100, update_display)
+                return
+            
+            # 计算显示区域（居中显示）
+            img_ratio = original_img.width / original_img.height if original_img.height > 0 else 1
+            canvas_ratio = canvas_width / canvas_height if canvas_height > 0 else 1
+            
+            if img_ratio > canvas_ratio:
+                # 图片更宽，以宽度为准
+                display_w = int(canvas_width * 0.95)
+                display_h = int(display_w / img_ratio)
+            else:
+                # 图片更高，以高度为准
+                display_h = int(canvas_height * 0.95)
+                display_w = int(display_h * img_ratio)
+            
+            display_x = (canvas_width - display_w) // 2
+            display_y = (canvas_height - display_h) // 2
+            
+            # 计算分割线位置
+            slider_pos = slider_var.get() / 100.0  # 0.0 到 1.0
+            split_x = display_x + int(display_w * slider_pos)
+            
+            # 左侧：原始图片（只显示左侧部分）
+            if original_img:
+                left_width = int((split_x - display_x) * (original_img.width / display_w))
+                if left_width > 0:
+                    left_img = original_img.crop((0, 0, min(left_width, original_img.width), original_img.height))
+                    left_photo = ImageTk.PhotoImage(left_img.resize((split_x - display_x, display_h), Image.LANCZOS))
+                    preview_canvas.create_image(display_x, display_y, anchor=tk.NW, image=left_photo, tags='media')
+                    preview_canvas.left_photo = left_photo  # 保持引用
+            
+            # 右侧：压缩后图片（只显示右侧部分）
+            if compressed_img:
+                right_start = int((split_x - display_x) * (compressed_img.width / display_w))
+                if right_start < compressed_img.width:
+                    right_img = compressed_img.crop((right_start, 0, compressed_img.width, compressed_img.height))
+                    right_photo = ImageTk.PhotoImage(right_img.resize((display_x + display_w - split_x, display_h), Image.LANCZOS))
+                    preview_canvas.create_image(split_x, display_y, anchor=tk.NW, image=right_photo, tags='media')
+                    preview_canvas.right_photo = right_photo  # 保持引用
+            
+            # 绘制分割线（垂直分割线，只保留一条线）
+            preview_canvas.create_line(split_x, display_y, split_x, display_y + display_h, 
+                                       fill='#ffffff', width=4, tags='split_line')
+        
+        def on_slider_change(*args):
+            """滑块变化时更新显示"""
+            update_display()
+        
+        slider_var.trace('w', on_slider_change)
+        
+        def load_media():
+            """加载并显示媒体"""
+            if is_image:
+                # 图片处理（同步执行，因为速度较快）
+                load_media_sync()
+            else:
+                # 视频处理（异步执行，避免阻塞GUI）
+                load_media_async()
+        
+        def load_media_sync():
+            """同步加载图片（因为图片压缩较快）"""
+            nonlocal original_photo, compressed_photo, original_img, compressed_img
+            nonlocal display_width, display_height
+            
+            progress_label.config(text="正在压缩...", foreground="blue")
+            preview_window.update()
+            
+            try:
+                # 图片处理
+                # 加载原图
+                original_img = Image.open(source_file)
+                original_width, original_height = original_img.size
+                original_format = original_img.format or "未知"
+                original_mode = original_img.mode
+                
+                # 执行压缩
+                start_time = time.time()
+                if self.image_compressor.compress(source_file, temp_output):
+                    compressed_size = os.path.getsize(temp_output) if os.path.exists(temp_output) else 0
+                    elapsed_time = time.time() - start_time
+                    
+                    if compressed_size > 0:
+                        # 加载压缩后的图片
+                        compressed_img = Image.open(temp_output)
+                        compressed_width, compressed_height = compressed_img.size
+                        compressed_format = compressed_img.format or "未知"
+                        compressed_mode = compressed_img.mode
+                        
+                        # 获取画布尺寸并计算合适的显示尺寸
+                        preview_canvas.update_idletasks()
+                        canvas_width = preview_canvas.winfo_width() or 800
+                        canvas_height = preview_canvas.winfo_height() or 600
+                        
+                        # 计算缩放比例（保持原始比例，适应画布）
+                        ratio = min(canvas_width * 0.9 / max(original_width, compressed_width), 
+                                  canvas_height * 0.9 / max(original_height, compressed_height), 1.0)
+                        display_width = int(max(original_width, compressed_width) * ratio)
+                        display_height = int(max(original_height, compressed_height) * ratio)
+                        
+                        # 缩放图片到显示尺寸（保持比例）
+                        original_display = original_img.resize((display_width, int(display_width * original_height / original_width)), Image.LANCZOS)
+                        compressed_display = compressed_img.resize((display_width, int(display_width * compressed_height / compressed_width)), Image.LANCZOS)
+                        
+                        # 统一高度（使用较大的高度）
+                        max_height = max(original_display.height, compressed_display.height)
+                        if original_display.height != max_height:
+                            original_display = original_display.resize((int(original_display.width * max_height / original_display.height), max_height), Image.LANCZOS)
+                        if compressed_display.height != max_height:
+                            compressed_display = compressed_display.resize((int(compressed_display.width * max_height / compressed_display.height), max_height), Image.LANCZOS)
+                        
+                        display_height = max_height
+                        display_width = max(original_display.width, compressed_display.width)
+                        
+                        # 创建PhotoImage对象
+                        original_photo = ImageTk.PhotoImage(original_display)
+                        compressed_photo = ImageTk.PhotoImage(compressed_display)
+                        
+                        # 保存原始图片对象用于裁剪
+                        original_img = original_display
+                        compressed_img = compressed_display
+                        
+                        # 更新详细信息
+                        compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+                        details_content = f"""【原始图片信息】
+文件名: {os.path.basename(source_file)}
+文件大小: {FileProcessor.format_size(original_size)}
+图片尺寸: {original_width} x {original_height} 像素
+图片格式: {original_format}
+颜色模式: {original_mode}
+显示尺寸: {display_width} x {display_height} 像素
+
+【压缩后图片信息】
+文件名: {os.path.basename(temp_output)}
+文件大小: {FileProcessor.format_size(compressed_size)}
+图片尺寸: {compressed_width} x {compressed_height} 像素
+图片格式: {compressed_format}
+颜色模式: {compressed_mode}
+显示尺寸: {display_width} x {display_height} 像素
+
+【压缩统计】
+压缩率: {compression_ratio:.2f}%
+节省空间: {FileProcessor.format_size(original_size - compressed_size)}
+压缩用时: {self._format_time(elapsed_time)}"""
+                        
+                        details_text.config(state=tk.NORMAL)
+                        details_text.delete('1.0', tk.END)
+                        details_text.insert('1.0', details_content)
+                        details_text.config(state=tk.DISABLED)
+                        
+                        # 更新统计信息
+                        stats_text = (f"压缩完成！ | "
+                                    f"原始: {FileProcessor.format_size(original_size)} | "
+                                    f"压缩后: {FileProcessor.format_size(compressed_size)} | "
+                                    f"压缩率: {compression_ratio:.2f}% | "
+                                    f"用时: {self._format_time(elapsed_time)}")
+                        stats_label.config(text=stats_text, foreground="green")
+                        progress_label.config(text="压缩完成 - 拖动滑块查看对比效果", foreground="green")
+                        
+                        # 更新显示
+                        preview_window.after(100, update_display)
+                    else:
+                        stats_label.config(text="压缩失败：未生成输出文件", foreground="red")
+                        progress_label.config(text="压缩失败", foreground="red")
+                else:
+                    stats_label.config(text="压缩失败", foreground="red")
+                    progress_label.config(text="压缩失败", foreground="red")
+            except Exception as e:
+                self.logger.error(f"预览压缩失败: {e}")
+                import traceback
+                traceback.print_exc()
+                stats_label.config(text=f"错误: {str(e)}", foreground="red")
+                progress_label.config(text="发生错误", foreground="red")
+        
+        def load_media_async():
+            """异步加载视频（使用线程避免阻塞GUI）"""
+            if not HAS_CV2:
+                messagebox.showerror("错误", "需要opencv-python库来预览视频\n请安装: pip install opencv-python")
+                on_closing()
+                return
+            
+            progress_label.config(text="正在压缩视频（后台处理中，请稍候）...", foreground="blue")
+            # 禁用按钮，防止重复点击
+            for widget in button_frame.winfo_children():
+                if isinstance(widget, ttk.Button) and widget.cget('text') == "开始压缩预览":
+                    widget.config(state=tk.DISABLED)
+            
+            def compress_thread():
+                """在后台线程中执行压缩"""
+                try:
+                    import cv2
+                    
+                    # 执行压缩
+                    start_time = time.time()
+                    success = self.video_compressor.compress(source_file, temp_output)
+                    elapsed_time = time.time() - start_time
+                    
+                    # 在主线程中更新UI
+                    preview_window.after(0, lambda: on_compress_complete(success, elapsed_time))
+                except Exception as e:
+                    self.logger.error(f"压缩线程错误: {e}")
+                    preview_window.after(0, lambda: on_compress_error(str(e)))
+            
+            # 启动压缩线程
+            compression_thread = threading.Thread(target=compress_thread, daemon=True)
+            compression_thread.start()
+        
+        def on_compress_complete(success, elapsed_time):
+            """压缩完成后的回调"""
+            nonlocal original_photo, compressed_photo, original_img, compressed_img
+            nonlocal display_width, display_height
+            
+            # 重新启用按钮
+            for widget in button_frame.winfo_children():
+                if isinstance(widget, ttk.Button) and widget.cget('text') == "开始压缩预览":
+                    widget.config(state=tk.NORMAL)
+            
+            if not success:
+                stats_label.config(text="压缩失败", foreground="red")
+                progress_label.config(text="压缩失败", foreground="red")
+                return
+            
+            try:
+                import cv2
+                
+                compressed_size = os.path.getsize(temp_output) if os.path.exists(temp_output) else 0
+                
+                if compressed_size > 0:
+                    # 打开视频文件
+                    preview_window._video_cap_original = cv2.VideoCapture(source_file)
+                    preview_window._video_cap_compressed = cv2.VideoCapture(temp_output)
+                    
+                    if not preview_window._video_cap_original.isOpened() or not preview_window._video_cap_compressed.isOpened():
+                        messagebox.showerror("错误", "无法打开视频文件")
+                        on_closing()
+                        return
+                    
+                    # 获取视频信息
+                    preview_window._video_fps_original = preview_window._video_cap_original.get(cv2.CAP_PROP_FPS) or 30
+                    preview_window._video_fps_compressed = preview_window._video_cap_compressed.get(cv2.CAP_PROP_FPS) or 30
+                    preview_window._video_frame_count_original = int(preview_window._video_cap_original.get(cv2.CAP_PROP_FRAME_COUNT))
+                    preview_window._video_frame_count_compressed = int(preview_window._video_cap_compressed.get(cv2.CAP_PROP_FRAME_COUNT))
+                    preview_window._video_duration_original = preview_window._video_frame_count_original / preview_window._video_fps_original if preview_window._video_fps_original > 0 else 0
+                    preview_window._video_duration_compressed = preview_window._video_frame_count_compressed / preview_window._video_fps_compressed if preview_window._video_fps_compressed > 0 else 0
+                    
+                    frame_width_orig = int(preview_window._video_cap_original.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    frame_height_orig = int(preview_window._video_cap_original.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    frame_width_comp = int(preview_window._video_cap_compressed.get(cv2.CAP_PROP_FRAME_WIDTH))
+                    frame_height_comp = int(preview_window._video_cap_compressed.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                    
+                    # 读取第一帧
+                    ret_orig, frame_orig = preview_window._video_cap_original.read()
+                    ret_comp, frame_comp = preview_window._video_cap_compressed.read()
+                    
+                    if ret_orig and ret_comp:
+                        # 重置视频到开始位置
+                        preview_window._video_cap_original.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        preview_window._video_cap_compressed.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        
+                        # 转换BGR到RGB
+                        frame_orig_rgb = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2RGB)
+                        frame_comp_rgb = cv2.cvtColor(frame_comp, cv2.COLOR_BGR2RGB)
+                        
+                        # 转换为PIL Image
+                        original_img = Image.fromarray(frame_orig_rgb)
+                        compressed_img = Image.fromarray(frame_comp_rgb)
+                        
+                        # 获取画布尺寸并计算合适的显示尺寸
+                        preview_canvas.update_idletasks()
+                        canvas_width = preview_canvas.winfo_width() or 800
+                        canvas_height = preview_canvas.winfo_height() or 600
+                        
+                        # 计算缩放比例
+                        ratio = min(canvas_width * 0.9 / max(frame_width_orig, frame_width_comp), 
+                                  canvas_height * 0.9 / max(frame_height_orig, frame_height_comp), 1.0)
+                        display_width = int(max(frame_width_orig, frame_width_comp) * ratio)
+                        display_height = int(max(frame_height_orig, frame_height_comp) * ratio)
+                        
+                        # 缩放图片
+                        original_display = original_img.resize((display_width, int(display_width * frame_height_orig / frame_width_orig)), Image.LANCZOS)
+                        compressed_display = compressed_img.resize((display_width, int(display_width * frame_height_comp / frame_width_comp)), Image.LANCZOS)
+                        
+                        # 统一高度
+                        max_height = max(original_display.height, compressed_display.height)
+                        if original_display.height != max_height:
+                            original_display = original_display.resize((int(original_display.width * max_height / original_display.height), max_height), Image.LANCZOS)
+                        if compressed_display.height != max_height:
+                            compressed_display = compressed_display.resize((int(compressed_display.width * max_height / compressed_display.height), max_height), Image.LANCZOS)
+                        
+                        display_height = max_height
+                        display_width = max(original_display.width, compressed_display.width)
+                        
+                        # 创建PhotoImage对象
+                        original_photo = ImageTk.PhotoImage(original_display)
+                        compressed_photo = ImageTk.PhotoImage(compressed_display)
+                        
+                        # 保存原始图片对象
+                        original_img = original_display
+                        compressed_img = compressed_display
+                        
+                        # 更新详细信息
+                        compression_ratio = (1 - compressed_size / original_size) * 100 if original_size > 0 else 0
+                        details_content = f"""【原始视频信息】
+文件名: {os.path.basename(source_file)}
+文件大小: {FileProcessor.format_size(original_size)}
+视频尺寸: {frame_width_orig} x {frame_height_orig} 像素
+帧率: {preview_window._video_fps_original:.2f} FPS
+总帧数: {preview_window._video_frame_count_original}
+时长: {self._format_time(preview_window._video_duration_original)}
+显示尺寸: {display_width} x {display_height} 像素
+
+【压缩后视频信息】
+文件名: {os.path.basename(temp_output)}
+文件大小: {FileProcessor.format_size(compressed_size)}
+视频尺寸: {frame_width_comp} x {frame_height_comp} 像素
+帧率: {preview_window._video_fps_compressed:.2f} FPS
+总帧数: {preview_window._video_frame_count_compressed}
+时长: {self._format_time(preview_window._video_duration_compressed)}
+显示尺寸: {display_width} x {display_height} 像素
+
+【压缩统计】
+压缩率: {compression_ratio:.2f}%
+节省空间: {FileProcessor.format_size(original_size - compressed_size)}
+压缩用时: {self._format_time(elapsed_time)}"""
+                        
+                        details_text.config(state=tk.NORMAL)
+                        details_text.delete('1.0', tk.END)
+                        details_text.insert('1.0', details_content)
+                        details_text.config(state=tk.DISABLED)
+                        
+                        # 更新统计信息
+                        stats_text = (f"压缩完成！ | "
+                                    f"原始: {FileProcessor.format_size(original_size)} | "
+                                    f"压缩后: {FileProcessor.format_size(compressed_size)} | "
+                                    f"压缩率: {compression_ratio:.2f}% | "
+                                    f"用时: {self._format_time(elapsed_time)}")
+                        stats_label.config(text=stats_text, foreground="green")
+                        progress_label.config(text="压缩完成 - 拖动滑块查看对比效果，使用播放控制播放视频", foreground="green")
+                        
+                        # 更新显示
+                        preview_window.after(100, update_display)
+                        
+                        # 启用播放控制
+                        enable_playback_controls()
+                    else:
+                        messagebox.showerror("错误", "无法读取视频帧")
+                        on_closing()
+                else:
+                    stats_label.config(text="压缩失败：未生成输出文件", foreground="red")
+                    progress_label.config(text="压缩失败", foreground="red")
+            except Exception as e:
+                self.logger.error(f"处理压缩结果失败: {e}")
+                import traceback
+                traceback.print_exc()
+                stats_label.config(text=f"错误: {str(e)}", foreground="red")
+                progress_label.config(text="发生错误", foreground="red")
+        
+        def on_compress_error(error_msg):
+            """压缩错误回调"""
+            # 重新启用按钮
+            for widget in button_frame.winfo_children():
+                if isinstance(widget, ttk.Button) and widget.cget('text') == "开始压缩预览":
+                    widget.config(state=tk.NORMAL)
+            
+            stats_label.config(text=f"错误: {error_msg}", foreground="red")
+            progress_label.config(text="压缩失败", foreground="red")
+        
+        # 视频播放控制（仅用于视频）
+        playback_frame = None
+        play_button = None
+        pause_button = None
+        video_progress_scale = None
+        video_progress_label = None
+        video_current_frame = 0
+        video_total_frames = 0
+        video_play_timer = None
+        
+        def enable_playback_controls():
+            """启用视频播放控制"""
+            nonlocal playback_frame, play_button, pause_button, video_progress_scale, video_progress_label
+            
+            if is_image:
+                return  # 图片不需要播放控制
+            
+            # 创建播放控制区域（在滑块下方）
+            if playback_frame is None:
+                playback_frame = ttk.Frame(control_frame)
+                playback_frame.pack(fill=tk.X, pady=(10, 0))
+                
+                # 播放/暂停按钮
+                button_row = ttk.Frame(playback_frame)
+                button_row.pack(fill=tk.X, pady=5)
+                
+                play_button = ttk.Button(button_row, text="▶ 播放", command=play_video, style='Primary.TButton')
+                play_button.pack(side=tk.LEFT, padx=5)
+                
+                pause_button = ttk.Button(button_row, text="⏸ 暂停", command=pause_video, style='Primary.TButton', state=tk.DISABLED)
+                pause_button.pack(side=tk.LEFT, padx=5)
+                
+                # 进度条和标签
+                progress_row = ttk.Frame(playback_frame)
+                progress_row.pack(fill=tk.X, pady=5)
+                
+                ttk.Label(progress_row, text="播放进度:", font=('Segoe UI', 9)).pack(side=tk.LEFT, padx=5)
+                
+                video_progress_var = tk.DoubleVar(value=0.0)
+                video_progress_scale = ttk.Scale(progress_row, from_=0.0, to=100.0, 
+                                                orient=tk.HORIZONTAL, variable=video_progress_var, length=600,
+                                                command=on_progress_change)
+                video_progress_scale.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                
+                # 保存变量引用以便后续更新
+                preview_window._video_progress_var = video_progress_var
+                
+                video_progress_label = ttk.Label(progress_row, text="00:00 / 00:00", font=('Segoe UI', 9))
+                video_progress_label.pack(side=tk.LEFT, padx=5)
+            
+            # 更新总帧数
+            if hasattr(preview_window, '_video_frame_count_original'):
+                video_total_frames = min(preview_window._video_frame_count_original, 
+                                        preview_window._video_frame_count_compressed)
+                video_progress_scale.config(to=video_total_frames if video_total_frames > 0 else 100)
+            
+            # 显示播放控制
+            playback_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def play_video():
+            """播放视频"""
+            nonlocal video_playing, video_current_frame
+            
+            if not is_image and hasattr(preview_window, '_video_cap_original') and hasattr(preview_window, '_video_cap_compressed'):
+                video_playing = True
+                play_button.config(state=tk.DISABLED)
+                pause_button.config(state=tk.NORMAL)
+                update_video_frame()
+        
+        def pause_video():
+            """暂停视频"""
+            nonlocal video_playing
+            
+            video_playing = False
+            play_button.config(state=tk.NORMAL)
+            pause_button.config(state=tk.DISABLED)
+            
+            if video_play_timer:
+                preview_window.after_cancel(video_play_timer)
+                video_play_timer = None
+        
+        def on_progress_change(value):
+            """进度条变化时的处理"""
+            nonlocal video_current_frame
+            if not is_image:
+                try:
+                    frame_num = int(float(value))
+                    video_current_frame = frame_num
+                    seek_to_frame(frame_num)
+                except:
+                    pass
+        
+        def seek_to_frame(frame_num):
+            """跳转到指定帧"""
+            if not is_image and hasattr(preview_window, '_video_cap_original') and hasattr(preview_window, '_video_cap_compressed'):
+                import cv2
+                
+                # 设置两个视频到相同帧位置
+                preview_window._video_cap_original.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                preview_window._video_cap_compressed.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+                
+                # 读取当前帧
+                ret_orig, frame_orig = preview_window._video_cap_original.read()
+                ret_comp, frame_comp = preview_window._video_cap_compressed.read()
+                
+                if ret_orig and ret_comp:
+                    # 更新显示
+                    update_frame_display(frame_orig, frame_comp)
+                    
+                    # 更新进度标签
+                    if video_progress_label:
+                        current_time = frame_num / preview_window._video_fps_original if preview_window._video_fps_original > 0 else 0
+                        total_time = preview_window._video_duration_original
+                        video_progress_label.config(text=f"{self._format_time(current_time)} / {self._format_time(total_time)}")
+        
+        def update_frame_display(frame_orig, frame_comp):
+            """更新帧显示"""
+            nonlocal original_img, compressed_img, original_photo, compressed_photo
+            
+            import cv2
+            
+            # 转换BGR到RGB
+            frame_orig_rgb = cv2.cvtColor(frame_orig, cv2.COLOR_BGR2RGB)
+            frame_comp_rgb = cv2.cvtColor(frame_comp, cv2.COLOR_BGR2RGB)
+            
+            # 转换为PIL Image
+            frame_orig_pil = Image.fromarray(frame_orig_rgb)
+            frame_comp_pil = Image.fromarray(frame_comp_rgb)
+            
+            # 缩放图片（使用之前计算的display_width和display_height）
+            original_display = frame_orig_pil.resize((display_width, int(display_width * frame_orig_pil.height / frame_orig_pil.width)), Image.LANCZOS)
+            compressed_display = frame_comp_pil.resize((display_width, int(display_width * frame_comp_pil.height / frame_comp_pil.width)), Image.LANCZOS)
+            
+            # 统一高度
+            max_height = max(original_display.height, compressed_display.height)
+            if original_display.height != max_height:
+                original_display = original_display.resize((int(original_display.width * max_height / original_display.height), max_height), Image.LANCZOS)
+            if compressed_display.height != max_height:
+                compressed_display = compressed_display.resize((int(compressed_display.width * max_height / compressed_display.height), max_height), Image.LANCZOS)
+            
+            # 创建PhotoImage对象
+            original_photo = ImageTk.PhotoImage(original_display)
+            compressed_photo = ImageTk.PhotoImage(compressed_display)
+            
+            # 保存原始图片对象
+            original_img = original_display
+            compressed_img = compressed_display
+            
+            # 更新显示
+            update_display()
+        
+        def update_video_frame():
+            """更新视频帧（播放时调用）"""
+            nonlocal video_playing, video_current_frame, video_play_timer
+            
+            if not video_playing or is_image:
+                return
+            
+            if not hasattr(preview_window, '_video_cap_original') or not hasattr(preview_window, '_video_cap_compressed'):
+                return
+            
+            import cv2
+            
+            # 读取下一帧
+            ret_orig, frame_orig = preview_window._video_cap_original.read()
+            ret_comp, frame_comp = preview_window._video_cap_compressed.read()
+            
+            if ret_orig and ret_comp:
+                # 更新当前帧号
+                video_current_frame = int(preview_window._video_cap_original.get(cv2.CAP_PROP_POS_FRAMES))
+                
+                # 更新显示
+                update_frame_display(frame_orig, frame_comp)
+                
+                # 更新进度条
+                if video_progress_scale and hasattr(preview_window, '_video_progress_var'):
+                    preview_window._video_progress_var.set(video_current_frame)
+                
+                # 更新进度标签
+                if video_progress_label:
+                    current_time = video_current_frame / preview_window._video_fps_original if preview_window._video_fps_original > 0 else 0
+                    total_time = preview_window._video_duration_original
+                    video_progress_label.config(text=f"{self._format_time(current_time)} / {self._format_time(total_time)}")
+                
+                # 计算下一帧的延迟（毫秒）
+                if preview_window._video_fps_original > 0:
+                    delay_ms = int(1000 / preview_window._video_fps_original)
+                else:
+                    delay_ms = 33  # 默认30fps
+                
+                # 安排下一帧更新
+                video_play_timer = preview_window.after(delay_ms, update_video_frame)
+            else:
+                # 视频播放完毕，自动暂停
+                pause_video()
+                # 重置到开始位置
+                preview_window._video_cap_original.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                preview_window._video_cap_compressed.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                video_current_frame = 0
+                if video_progress_scale and hasattr(preview_window, '_video_progress_var'):
+                    preview_window._video_progress_var.set(0)
+        
+        ttk.Button(button_frame, text="开始压缩预览", command=load_media).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="关闭", command=on_closing).pack(side=tk.RIGHT, padx=5)
+        
+        # 窗口关闭时停止播放（更新关闭处理）
+        def on_closing_with_cleanup():
+            if not is_image:
+                pause_video()
+            on_closing_base()
+        
+        preview_window.protocol("WM_DELETE_WINDOW", on_closing_with_cleanup)
+        
+        # 窗口大小变化时更新显示
+        def on_resize(event):
+            if original_photo and compressed_photo:
+                update_display()
+        
+        preview_canvas.bind('<Configure>', on_resize)
+    
     def show_history(self):
         """显示压缩历史记录"""
         history = self.history_manager.get_all()
@@ -2432,7 +3293,7 @@ class FileCompressorApp:
             summary_window.title("压缩统计摘要")
             summary_window.transient(self.root)
             summary_window.grab_set()
-            self._center_window(summary_window, 600, 500)
+            self._center_window(summary_window, 600, 600)
             
             main_frame = ttk.Frame(summary_window, padding="20")
             main_frame.pack(fill=tk.BOTH, expand=True)
@@ -3027,6 +3888,14 @@ Copyright © 2024-2025 批量文件压缩工具
             self.stop_compression()
             time.sleep(0.5)
         
+        # 停止Web服务器
+        if self.web_server and self.web_server_running:
+            try:
+                self.web_server.stop()
+                self.logger.info("Web服务器已停止")
+            except Exception as e:
+                self.logger.error(f"停止Web服务器失败: {e}")
+        
         # 保存配置
         try:
             self.config_manager.set('source_dir', self.source_dir.get())
@@ -3040,6 +3909,222 @@ Copyright © 2024-2025 批量文件压缩工具
         # 清理内存
         self._cleanup_memory()
         self.root.destroy()
+    
+    def toggle_web_server(self):
+        """切换Web服务器状态"""
+        if self.web_server_running:
+            self.stop_web_server()
+        else:
+            self.start_web_server()
+    
+    def start_web_server(self):
+        """启动Web服务器"""
+        if not HAS_WEB_SERVER or not self.web_server:
+            messagebox.showerror("错误", "Web服务器功能不可用")
+            return
+        
+        if self.web_server_running:
+            messagebox.showinfo("提示", "Web服务器已在运行中")
+            return
+        
+        try:
+            self.web_server.start()
+            self.web_server_running = True
+            
+            # 更新按钮文本
+            if hasattr(self, 'web_server_button'):
+                self.web_server_button.config(text="停止Web服务")
+            
+            # 获取服务器URL
+            server_url = self.web_server.get_url()
+            if server_url:
+                messagebox.showinfo(
+                    "Web服务器已启动",
+                    f"Web服务器已成功启动！\n\n"
+                    f"访问地址：{server_url}\n\n"
+                    f"在局域网内的其他设备可以通过此地址访问Web界面。"
+                )
+                self.logger.info(f"Web服务器已启动: {server_url}")
+            else:
+                messagebox.showinfo("Web服务器已启动", "Web服务器已启动，但无法获取访问地址")
+                self.logger.info("Web服务器已启动")
+        except Exception as e:
+            error_msg = f"启动Web服务器失败: {str(e)}"
+            messagebox.showerror("错误", error_msg)
+            self.logger.error(error_msg)
+            self.web_server_running = False
+            if hasattr(self, 'web_server_button'):
+                self.web_server_button.config(text="启动Web服务")
+    
+    def stop_web_server(self):
+        """停止Web服务器"""
+        if not HAS_WEB_SERVER or not self.web_server:
+            return
+        
+        if not self.web_server_running:
+            messagebox.showinfo("提示", "Web服务器未运行")
+            return
+        
+        try:
+            self.web_server.stop()
+            self.web_server_running = False
+            
+            # 更新按钮文本
+            if hasattr(self, 'web_server_button'):
+                self.web_server_button.config(text="启动Web服务")
+            
+            messagebox.showinfo("提示", "Web服务器已停止")
+            self.logger.info("Web服务器已停止")
+        except Exception as e:
+            error_msg = f"停止Web服务器失败: {str(e)}"
+            messagebox.showerror("错误", error_msg)
+            self.logger.error(error_msg)
+    
+    def show_log_window(self):
+        """显示实时日志窗口"""
+        if self.log_window and self.log_window.winfo_exists():
+            # 如果窗口已存在，将其提升到前台
+            self.log_window.lift()
+            self.log_window.focus()
+            return
+        
+        # 创建日志窗口
+        self.log_window = tk.Toplevel(self.root)
+        self.log_window.title("实时日志 - 批量文件压缩工具")
+        self.log_window.transient(self.root)
+        self._center_window(self.log_window, 800, 600)
+        
+        # 创建主框架
+        main_frame = ttk.Frame(self.log_window, padding="10")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 创建工具栏
+        toolbar = ttk.Frame(main_frame)
+        toolbar.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Label(toolbar, text="实时日志", font=('Segoe UI', 10, 'bold')).pack(side=tk.LEFT, padx=6)
+        
+        ttk.Separator(toolbar, orient=tk.VERTICAL).pack(side=tk.LEFT, fill=tk.Y, padx=12, pady=4)
+        
+        ttk.Button(toolbar, text="清空日志", command=self._clear_log, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
+        ttk.Button(toolbar, text="保存日志", command=self._save_log, style='Primary.TButton').pack(side=tk.LEFT, padx=4)
+        
+        # 创建文本区域和滚动条
+        text_frame = ttk.Frame(main_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar_y = ttk.Scrollbar(text_frame)
+        scrollbar_y.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        scrollbar_x = ttk.Scrollbar(text_frame, orient=tk.HORIZONTAL)
+        scrollbar_x.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        self.log_text = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            font=('Consolas', 9),
+            bg='#1e1e1e',
+            fg='#d4d4d4',
+            insertbackground='#ffffff',
+            selectbackground='#264f78',
+            yscrollcommand=scrollbar_y.set,
+            xscrollcommand=scrollbar_x.set,
+            padx=10,
+            pady=10
+        )
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar_y.config(command=self.log_text.yview)
+        scrollbar_x.config(command=self.log_text.xview)
+        
+        # 配置文本样式（可选）
+        self.log_text.tag_config('INFO', foreground='#4ec9b0')
+        self.log_text.tag_config('WARNING', foreground='#ce9178')
+        self.log_text.tag_config('ERROR', foreground='#f48771')
+        self.log_text.tag_config('DEBUG', foreground='#9cdcfe')
+        
+        # 添加GUI日志处理器
+        if self.log_text:
+            # 先移除旧的处理器（如果存在）
+            for handler in self.logger.handlers[:]:
+                if isinstance(handler, TextHandler):
+                    self.logger.removeHandler(handler)
+            
+            # 重新设置日志系统，添加GUI处理器
+            gui_handler = TextHandler(self.log_text)
+            gui_handler.setLevel(logging.INFO)
+            log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            date_format = '%Y-%m-%d %H:%M:%S'
+            gui_formatter = logging.Formatter(log_format, datefmt=date_format)
+            gui_handler.setFormatter(gui_formatter)
+            self.logger.addHandler(gui_handler)
+            self._log_handler = gui_handler  # 保存引用，便于关闭时移除
+            
+            # 添加欢迎信息
+            self.log_text.insert(tk.END, f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 实时日志窗口已打开\n")
+            self.log_text.insert(tk.END, "=" * 80 + "\n\n")
+            self.log_text.see(tk.END)
+        
+        # 关闭按钮
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(8, 0))
+        
+        ttk.Button(button_frame, text="关闭", command=self._close_log_window, style='Primary.TButton').pack(side=tk.RIGHT, padx=4)
+        
+        # 窗口关闭事件
+        self.log_window.protocol("WM_DELETE_WINDOW", self._close_log_window)
+    
+    def _clear_log(self):
+        """清空日志"""
+        if self.log_text:
+            self.log_text.delete('1.0', tk.END)
+            self.log_text.insert(tk.END, f"{datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} - 日志已清空\n")
+            self.log_text.see(tk.END)
+    
+    def _save_log(self):
+        """保存日志到文件"""
+        if not self.log_text:
+            return
+        
+        try:
+            log_content = self.log_text.get('1.0', tk.END)
+            log_file = filedialog.asksaveasfilename(
+                defaultextension=".txt",
+                filetypes=[("文本文件", "*.txt"), ("所有文件", "*.*")],
+                title="保存日志"
+            )
+            
+            if log_file:
+                with open(log_file, 'w', encoding='utf-8') as f:
+                    f.write(log_content)
+                messagebox.showinfo("成功", "日志已保存")
+                self.logger.info(f"日志已保存到: {log_file}")
+        except Exception as e:
+            messagebox.showerror("错误", f"保存日志失败: {str(e)}")
+            self.logger.error(f"保存日志失败: {e}")
+    
+    def _close_log_window(self):
+        """关闭日志窗口"""
+        if self.log_window:
+            # 移除日志处理器（如果存在）
+            if hasattr(self, '_log_handler'):
+                try:
+                    self.logger.removeHandler(self._log_handler)
+                except (ValueError, AttributeError):
+                    pass  # 处理器可能已经被移除
+                delattr(self, '_log_handler')
+            
+            # 或者移除所有TextHandler类型的处理器
+            for handler in self.logger.handlers[:]:
+                if isinstance(handler, TextHandler):
+                    try:
+                        self.logger.removeHandler(handler)
+                    except (ValueError, AttributeError):
+                        pass
+            
+            self.log_window.destroy()
+            self.log_window = None
+            self.log_text = None
     
     def _cleanup_memory(self):
         """清理内存，移除不需要的数据"""

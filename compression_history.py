@@ -7,6 +7,7 @@ import json
 import datetime
 import logging
 from pathlib import Path
+from path_utils import get_history_dir
 
 
 class CompressionHistory:
@@ -21,7 +22,8 @@ class CompressionHistory:
             logger: 日志记录器
         """
         if history_file is None:
-            history_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'v2', 'history')
+            # 使用统一路径工具获取历史记录目录
+            history_dir = get_history_dir()
             os.makedirs(history_dir, exist_ok=True)
             history_file = os.path.join(history_dir, 'compression_history.json')
         

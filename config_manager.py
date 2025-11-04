@@ -7,12 +7,11 @@ import sys
 import configparser
 import re
 import logging
+from path_utils import get_v2_dir, get_app_path, get_config_path
 
-# 处理PyInstaller打包后的路径
-if getattr(sys, 'frozen', False):
-    app_path = sys._MEIPASS
-else:
-    app_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 获取路径（使用统一路径工具）
+app_path = get_app_path()
+v2_dir = get_v2_dir()
 
 
 class ConfigManager:
@@ -27,7 +26,8 @@ class ConfigManager:
         """
         self.config = configparser.ConfigParser()
         if config_path is None:
-            self.config_path = os.path.join(app_path, 'config.ini')
+            # 使用统一路径工具获取配置文件路径
+            self.config_path = get_config_path()
         else:
             self.config_path = config_path
         
@@ -44,11 +44,19 @@ class ConfigManager:
             'resolution_preset': '自定义',  # 分辨率预设
             'output_folder': 'compressed',
             'use_gpu': 'cpu',
-            'amd_encoder': 'h264_amf',
+            # 视频编码配置
+            'video_container': '.mp4',  # 容器格式：.mp4, .webm, .mkv, .mov, .avi
+            'video_encoder': 'libx264',  # 视频编码器（会根据容器和GPU自动选择）
+            'cpu_encoder': 'libx264',  # CPU编码器
+            'amd_encoder': 'h264_amf',  # AMD GPU编码器
+            'nvidia_encoder': 'h264_nvenc',  # Nvidia GPU编码器
+            'video_bitrate': '5000k',  # 视频比特率（用于GPU编码器）
+            'audio_encoder': 'aac',  # 音频编码器：aac, opus, mp3, vorbis
+            # AMD GPU配置
             'amd_video_bitrate': '5000k',
             'amd_bframes': 3,
             'amd_refs': 3,
-            'nvidia_encoder': 'h264_nvenc',
+            # Nvidia GPU配置
             'nvidia_preset': 'p4',
             'nvidia_video_bitrate': '5000k',
             'nvidia_rc': 'cbr',
@@ -100,12 +108,24 @@ class ConfigManager:
         ffmpeg_path_from_config = self.config.get('General', 'ffmpeg_path', 
                                                    fallback=self.defaults['ffmpeg_path'])
         if getattr(sys, 'frozen', False):
+            # 打包后的exe，FFmpeg路径应该在与exe同目录下
             if not os.path.isabs(ffmpeg_path_from_config):
-                self.settings['ffmpeg_path'] = os.path.join(app_path, ffmpeg_path_from_config)
+                # 相对路径，使用exe所在目录
+                from path_utils import get_bin_dir
+                exe_bin_dir = get_bin_dir()
+                # 如果路径是bin\ffmpeg.exe，使用exe同目录下的bin
+                if ffmpeg_path_from_config.startswith('bin'):
+                    self.settings['ffmpeg_path'] = os.path.join(exe_bin_dir, os.path.basename(ffmpeg_path_from_config))
+                else:
+                    self.settings['ffmpeg_path'] = os.path.join(exe_bin_dir, ffmpeg_path_from_config)
             else:
                 self.settings['ffmpeg_path'] = ffmpeg_path_from_config
         else:
-            self.settings['ffmpeg_path'] = ffmpeg_path_from_config
+            # 开发模式下，如果是相对路径，使用v2_dir作为基础路径
+            if not os.path.isabs(ffmpeg_path_from_config):
+                self.settings['ffmpeg_path'] = os.path.join(v2_dir, ffmpeg_path_from_config)
+            else:
+                self.settings['ffmpeg_path'] = ffmpeg_path_from_config
         
         # 基本配置
         self.settings['photo_quality'] = self.config.getint('General', 'photo_quality', 
@@ -126,6 +146,20 @@ class ConfigManager:
         # GPU配置
         self.settings['use_gpu'] = self.config.get('General', 'use_gpu', 
                                                    fallback=self.defaults['use_gpu']).lower()
+        
+        # 视频编码配置
+        self.settings['video_container'] = self.config.get('General', 'video_container', 
+                                                           fallback=self.defaults['video_container'])
+        self.settings['video_encoder'] = self.config.get('General', 'video_encoder', 
+                                                         fallback=self.defaults['video_encoder'])
+        self.settings['cpu_encoder'] = self.config.get('General', 'cpu_encoder', 
+                                                       fallback=self.defaults['cpu_encoder'])
+        self.settings['audio_encoder'] = self.config.get('General', 'audio_encoder', 
+                                                         fallback=self.defaults['audio_encoder'])
+        self.settings['video_bitrate'] = self.config.get('General', 'video_bitrate', 
+                                                        fallback=self.defaults['video_bitrate'])
+        
+        # AMD GPU配置
         self.settings['amd_encoder'] = self.config.get('General', 'amd_encoder', 
                                                       fallback=self.defaults['amd_encoder'])
         self.settings['amd_video_bitrate'] = self.config.get('General', 'amd_video_bitrate', 
@@ -170,6 +204,15 @@ class ConfigManager:
         
         # 保存GPU配置
         self.config.set('General', 'use_gpu', self.settings.get('use_gpu', self.defaults['use_gpu']))
+        
+        # 保存视频编码配置
+        self.config.set('General', 'video_container', self.settings.get('video_container', self.defaults['video_container']))
+        self.config.set('General', 'video_encoder', self.settings.get('video_encoder', self.defaults['video_encoder']))
+        self.config.set('General', 'cpu_encoder', self.settings.get('cpu_encoder', self.defaults['cpu_encoder']))
+        self.config.set('General', 'audio_encoder', self.settings.get('audio_encoder', self.defaults['audio_encoder']))
+        self.config.set('General', 'video_bitrate', self.settings.get('video_bitrate', self.defaults['video_bitrate']))
+        
+        # 保存AMD GPU配置
         self.config.set('General', 'amd_encoder', self.settings.get('amd_encoder', self.defaults['amd_encoder']))
         self.config.set('General', 'amd_video_bitrate', self.settings.get('amd_video_bitrate', self.defaults['amd_video_bitrate']))
         self.config.set('General', 'amd_bframes', str(self.settings.get('amd_bframes', self.defaults['amd_bframes'])))
@@ -246,6 +289,20 @@ class ConfigManager:
             errors.append(f"GPU模式 ({use_gpu}) 无效")
             self.settings['use_gpu'] = self.defaults['use_gpu']
         
+        # 验证视频容器格式
+        video_container = self.settings.get('video_container', self.defaults['video_container'])
+        valid_containers = ['.mp4', '.webm', '.mkv', '.mov', '.avi']
+        if video_container not in valid_containers:
+            errors.append(f"视频容器格式 ({video_container}) 无效")
+            self.settings['video_container'] = self.defaults['video_container']
+        
+        # 验证音频编码器
+        audio_encoder = self.settings.get('audio_encoder', self.defaults['audio_encoder'])
+        valid_audio_encoders = ['aac', 'opus', 'mp3', 'vorbis']
+        if audio_encoder not in valid_audio_encoders:
+            errors.append(f"音频编码器 ({audio_encoder}) 无效")
+            self.settings['audio_encoder'] = self.defaults['audio_encoder']
+        
         # 验证AMD编码器
         amd_encoder = self.settings.get('amd_encoder', self.defaults['amd_encoder'])
         valid_amd_encoders = ['h264_amf', 'hevc_amf']
@@ -290,8 +347,8 @@ class ConfigManager:
         ffmpeg_path = self.settings.get('ffmpeg_path', self.defaults['ffmpeg_path'])
         if not os.path.isfile(ffmpeg_path):
             errors.append(f"FFmpeg可执行文件不存在: {ffmpeg_path}")
-            # 尝试查找默认路径
-            default_ffmpeg = os.path.join(app_path, 'bin', 'ffmpeg.exe')
+            # 尝试查找默认路径（v2目录下的bin文件夹）
+            default_ffmpeg = os.path.join(v2_dir, 'bin', 'ffmpeg.exe')
             if os.path.isfile(default_ffmpeg):
                 self.settings['ffmpeg_path'] = default_ffmpeg
                 errors[-1] += f"，已自动使用默认路径: {default_ffmpeg}"
